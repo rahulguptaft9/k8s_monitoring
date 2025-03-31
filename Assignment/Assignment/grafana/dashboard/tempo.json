@@ -1,0 +1,146 @@
+{
+    "annotations": {
+      "list": [
+        {
+          "builtIn": 1,
+          "datasource": {
+            "type": "grafana",
+            "uid": "-- Grafana --"
+          },
+          "enable": true,
+          "hide": true,
+          "iconColor": "rgba(0, 211, 255, 1)",
+          "name": "Annotations & Alerts",
+          "type": "dashboard"
+        }
+      ]
+    },
+    "editable": true,
+    "fiscalYearStartMonth": 0,
+    "graphTooltip": 0,
+    "id": 4,
+    "links": [],
+    "panels": [
+      {
+        "datasource": {
+          "type": "tempo",
+          "uid": "P214B5B846CF3925F"
+        },
+        "fieldConfig": {
+          "defaults": {
+            "custom": {
+              "align": "auto",
+              "cellOptions": {
+                "type": "auto"
+              },
+              "inspect": false
+            },
+            "mappings": [],
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {
+                  "color": "green"
+                },
+                {
+                  "color": "red",
+                  "value": 80
+                }
+              ]
+            }
+          },
+          "overrides": []
+        },
+        "gridPos": {
+          "h": 10,
+          "w": 19,
+          "x": 0,
+          "y": 0
+        },
+        "id": 1,
+        "options": {
+          "cellHeight": "sm",
+          "footer": {
+            "countRows": false,
+            "fields": "",
+            "reducer": [
+              "sum"
+            ],
+            "show": false
+          },
+          "showHeader": true
+        },
+        "pluginVersion": "11.6.0",
+        "targets": [
+          {
+            "datasource": {
+              "type": "tempo",
+              "uid": "P214B5B846CF3925F"
+            },
+            "filters": [
+              {
+                "id": "a8046a28",
+                "operator": "=",
+                "scope": "span"
+              },
+              {
+                "id": "service-name",
+                "operator": "=",
+                "scope": "resource",
+                "tag": "service.name",
+                "value": [
+                  "demo-app"
+                ],
+                "valueType": "string"
+              }
+            ],
+            "key": "Q-4e7f40c9-f3b9-4403-ad49-b59cb028b930-0",
+            "limit": 20,
+            "metricsQueryType": "range",
+            "queryType": "traceqlSearch",
+            "refId": "A",
+            "tableType": "traces"
+          }
+        ],
+        "title": "Traces",
+        "type": "table"
+      }
+    ],
+    "preload": false,
+    "schemaVersion": 41,
+    "tags": [],
+    "templating": {
+      "list": [
+        {
+          "current": {
+            "text": "demo-app",
+            "value": "demo-app"
+          },
+          "datasource": {
+            "type": "tempo",
+            "uid": "P214B5B846CF3925F"
+          },
+          "definition": "",
+          "name": "Application",
+          "options": [],
+          "query": {
+            "label": "service.name",
+            "refId": "TempoDatasourceVariableQueryEditor-VariableQuery",
+            "type": 1
+          },
+          "refresh": 2,
+          "regex": "",
+          "type": "query"
+        }
+      ]
+    },
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "timepicker": {},
+    "timezone": "browser",
+    "title": "Tempo",
+    "uid": "degzmkb9khfcwb",
+    "version": 2
+  }

@@ -1,0 +1,135 @@
+
+# ConfigMap for Mimir configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: monitoring
+  name: mimir-config
+data:
+  mimir-config.yaml: |
+    # Do not use this configuration in production.
+    # It is for demonstration purposes only.
+    multitenancy_enabled: false
+
+    # Server configuration
+    server:
+      http_listen_port: 9009
+      grpc_listen_port: 9095
+      log_level: info  # Changed from error to info for better debugging
+
+    # Blocks storage configuration
+    blocks_storage:
+      backend: filesystem
+      bucket_store:
+        sync_dir: /tmp/mimir/tsdb-sync
+      filesystem:
+        dir: /tmp/mimir/data/tsdb
+      tsdb:
+        dir: /tmp/mimir/tsdb
+
+    # Compactor configuration
+    compactor:
+      data_dir: /tmp/mimir/compactor
+      sharding_ring:
+        kvstore:
+          store: inmemory  # Using inmemory instead of memberlist for simplicity
+
+    # Distributor configuration
+    distributor:
+      ring:
+        instance_addr: 0.0.0.0  # Changed from 127.0.0.1 to allow container networking
+        kvstore:
+          store: inmemory  # Using inmemory instead of memberlist
+
+    # Ingester configuration
+    ingester:
+      ring:
+        instance_addr: 0.0.0.0  # Changed from 127.0.0.1 to allow container networking
+        kvstore:
+          store: inmemory  # Using inmemory instead of memberlist
+        replication_factor: 1
+
+    # Ruler storage configuration
+    ruler_storage:
+      backend: filesystem
+      filesystem:
+        dir: /tmp/mimir/rules
+
+    # Store-gateway configuration
+    store_gateway:
+      sharding_ring:
+        replication_factor: 1
+
+    # Limits configuration (optional, added for consistency with previous setup)
+    limits:
+      max_global_series_per_user: 0
+      max_fetched_series_per_query: 1000000
+---
+# Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana-mimir
+  namespace: monitoring
+  labels:
+    app: grafana-mimir
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana-mimir
+  template:
+    metadata:
+      labels:
+        app: grafana-mimir
+    spec:
+      containers:
+        - name: grafana-mimir
+          image: grafana/mimir:2.11.0
+          args:
+            - "-config.file=/etc/mimir/mimir-config.yaml"
+          ports:
+            - containerPort: 9009
+              name: http
+            - containerPort: 9095
+              name: grpc
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/mimir
+            - name: data-volume
+              mountPath: /tmp/mimir  # Parent directory for all filesystem paths
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1Gi"
+              cpu: "500m"
+      volumes:
+        - name: config-volume
+          configMap:
+            name: mimir-config
+        - name: data-volume
+          emptyDir: {}
+---
+# Service
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: monitoring
+  name: grafana-mimir
+  labels:
+    app: grafana-mimir
+spec:
+  selector:
+    app: grafana-mimir
+  ports:
+    - name: http
+      protocol: TCP
+      port: 9009
+      targetPort: 9009
+    - name: grpc
+      protocol: TCP
+      port: 9095
+      targetPort: 9095
+  type: ClusterIP

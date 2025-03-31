@@ -1,0 +1,247 @@
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  namespace: monitoring
+  name: prometheus-role
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "pods", "services", "endpoints"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["nodes/proxy"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  namespace: monitoring
+  name: prometheus-rolebinding
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+roleRef:
+  kind: Role
+  name: prometheus-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: prometheus
+rules:
+- apiGroups: [""]
+  resources:
+  - nodes
+  - nodes/proxy  
+  - pods
+  - services
+  - endpoints
+  verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: prometheus
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: prometheus
+subjects:
+- kind: ServiceAccount
+  name: prometheus
+  namespace: monitoring
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+  labels:
+    app: prometheus
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      serviceAccountName: prometheus
+      containers:
+      - name: prometheus
+        image: prom/prometheus:latest
+        args:
+          - "--config.file=/etc/prometheus/prometheus.yml"
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config-volume
+          mountPath: "/etc/prometheus"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: prometheus-config
+---
+# ConfigMap for Prometheus configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      # Prometheus self-monitoring
+      - job_name: 'prometheus'
+        static_configs:
+          - targets: ['localhost:9090']
+      - job_name: 'postgres'
+        static_configs:
+          - targets: ['pg-exporter-service:9187']
+        metrics_path: /metrics
+      # Scrape metrics from demo-app
+      - job_name: 'demo-app'
+        static_configs:
+          - targets: ['demo-app-service.application.svc.cluster.local:3000']
+        metrics_path: /metrics
+      # Node Exporter scrape job
+      - job_name: 'node-exporter'
+        kubernetes_sd_configs:
+        - role: endpoints
+          namespaces:
+            names:
+            - monitoring
+        relabel_configs:
+        - source_labels: [__meta_kubernetes_service_label_app]
+          regex: node-exporter
+          action: keep
+        - source_labels: [__meta_kubernetes_endpoint_port_name]
+          regex: metrics
+          action: keep
+      # Scrape kubelet metrics (node-level metrics)
+      - job_name: 'kubelet'
+        scheme: https
+        tls_config:
+          insecure_skip_verify: true  
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token  # Use service account token
+        kubernetes_sd_configs:
+          - role: node
+        metrics_path: /metrics
+        relabel_configs:
+          - source_labels: [__address__]
+            target_label: instance
+      # Scrape pod metrics using Kubernetes service discovery
+      - job_name: 'kubernetes-pods'
+        kubernetes_sd_configs:
+          - role: pod
+        relabel_configs:
+          # Only scrape pods with prometheus.io/scrape: "true" annotation
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+            action: keep
+            regex: true
+          # Use port from prometheus.io/port annotation if present
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_port, __address__]
+            action: replace
+            regex: (.+);(.+)
+            replacement: $2:$1
+            target_label: __address__
+          # Set metrics path from annotation (defaults to /metrics if not specified)
+          - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+            action: replace
+            target_label: __metrics_path__
+            regex: (.+)
+            replacement: $1
+    remote_write:
+      - url: "http://grafana-mimir.monitoring.svc.cluster.local:9009/api/v1/push"
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  ports:
+  - port: 9090
+    targetPort: 9090
+  selector:
+    app: prometheus
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-exporter
+  namespace: monitoring  
+  labels:
+    app: node-exporter
+spec:
+  selector:
+    matchLabels:
+      app: node-exporter
+  template:
+    metadata:
+      labels:
+        app: node-exporter
+    spec:
+      hostNetwork: true  
+      hostPID: true      
+      containers:
+      - name: node-exporter
+        image: prom/node-exporter:latest
+        args:
+        - --path.procfs=/host/proc
+        - --path.sysfs=/host/sys
+        ports:
+        - containerPort: 9100
+          name: metrics
+        volumeMounts:
+        - name: proc
+          mountPath: /host/proc
+          readOnly: true
+        - name: sys
+          mountPath: /host/sys
+          readOnly: true
+      volumes:
+      - name: proc
+        hostPath:
+          path: /proc
+      - name: sys
+        hostPath:
+          path: /sys
+      tolerations:
+      - effect: NoSchedule
+        operator: Exists
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: node-exporter
+  namespace: monitoring  
+  labels:
+    app: node-exporter
+spec:
+  ports:
+  - name: metrics
+    port: 9100
+    targetPort: 9100
+    protocol: TCP
+  selector:
+    app: node-exporter
+  type: ClusterIP  

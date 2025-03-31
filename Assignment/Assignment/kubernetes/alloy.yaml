@@ -1,0 +1,191 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  namespace: monitoring
+  name: alloy-config
+data:
+  alloy-config.river: |-
+    logging {
+      level  = "debug"
+      format = "logfmt"
+    }
+
+    // Discover Kubernetes pods
+    discovery.kubernetes "pod" {
+      role = "pod"
+    }
+
+    // Relabel discovered pod targets
+    discovery.relabel "pod_logs" {
+      targets = discovery.kubernetes.pod.targets
+
+      // Label: namespace
+      rule {
+        source_labels = ["__meta_kubernetes_namespace"]
+        action = "replace"
+        target_label = "namespace"
+      }
+
+      // Label: pod
+      rule {
+        source_labels = ["__meta_kubernetes_pod_name"]
+        action = "replace"
+        target_label = "pod"
+      }
+
+      // Label: container
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_name"]
+        action = "replace"
+        target_label = "container"
+      }
+
+      // Label: app
+      rule {
+        source_labels = ["__meta_kubernetes_pod_label_app_kubernetes_io_name"]
+        action = "replace"
+        target_label = "app"
+      }
+
+      // Label: job (namespace/container)
+      rule {
+        source_labels = ["__meta_kubernetes_namespace", "__meta_kubernetes_pod_container_name"]
+        action = "replace"
+        target_label = "job"
+        separator = "/"
+        replacement = "$1"
+      }
+
+      // Label: __path__ (pod UID/container log path)
+      rule {
+        source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+        action = "replace"
+        target_label = "__path__"
+        separator = "/"
+        replacement = "/var/log/pods/*$1/*.log"
+      }
+
+      // Label: container_runtime
+      rule {
+        source_labels = ["__meta_kubernetes_pod_container_id"]
+        action = "replace"
+        target_label = "container_runtime"
+        regex = "^(\\S+):\\/\\/.+$"
+        replacement = "$1"
+      }
+    }
+
+    // Tail logs from Kubernetes containers
+    loki.source.kubernetes "pod_logs" {
+      targets    = discovery.relabel.pod_logs.output
+      forward_to = [loki.process.pod_logs.receiver]
+    }
+
+    // Process logs with static labels
+    loki.process "pod_logs" {
+      stage.static_labels {
+        values = {
+          cluster = "minikube",  // Set to your cluster name
+        }
+      }
+      forward_to = [loki.write.loki.receiver]
+    }
+
+    // Send logs to Loki
+    loki.write "loki" {
+      endpoint {
+        url = "http://loki:3100/loki/api/v1/push"  // Adjust if Service name differs
+      }
+    }
+
+    // Echo logs for debugging
+    loki.echo "example" {}
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: grafana-agent-daemonset
+  namespace: monitoring
+  labels:
+    app: grafana-agent
+spec:
+  selector:
+    matchLabels:
+      app: grafana-agent
+  template:
+    metadata:
+      labels:
+        app: grafana-agent
+    spec:
+      serviceAccountName: grafana-agent-serviceaccount
+      containers:
+      - name: grafana-agent
+        image: grafana/alloy:latest
+        args:
+        - "run"
+        - "/etc/alloy/alloy-config.river"
+        ports:
+        - containerPort: 3101
+          name: http
+        volumeMounts:
+        - name: config-volume
+          mountPath: "/etc/alloy"
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+      volumes:
+      - name: config-volume
+        configMap:
+          name: alloy-config
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: grafana-agent-serviceaccount
+  namespace: monitoring
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: grafana-agent-clusterrole
+rules:
+- apiGroups: [""]
+  resources: ["nodes", "nodes/proxy", "services", "endpoints", "pods", "pods/log"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: ["security.openshift.io"]
+  resourceNames: ["hostmount-anyuid", "privileged"]
+  resources: ["securitycontextconstraints"]
+  verbs: ["use"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-agent-clusterrolebinding
+subjects:
+- kind: ServiceAccount
+  name: grafana-agent-serviceaccount
+  namespace: monitoring
+roleRef:
+  kind: ClusterRole
+  name: grafana-agent-clusterrole
+  apiGroup: rbac.authorization.k8s.io
+---
+# Service (fixed: removed "BRE" from selector)
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: monitoring
+  name: grafana-alloy
+spec:
+  selector:
+    app: grafana-alloy
+  ports:
+    - protocol: TCP
+      port: 3101
+      targetPort: 3101
+  type: ClusterIP

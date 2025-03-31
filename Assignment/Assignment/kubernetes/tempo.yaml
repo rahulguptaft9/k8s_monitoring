@@ -1,0 +1,85 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tempo
+  template:
+    metadata:
+      labels:
+        app: tempo
+    spec:
+      containers:
+      - name: tempo
+        image: grafana/tempo:latest
+        args:
+        - "-config.file=/etc/tempo/tempo.yaml"
+        ports:
+        - containerPort: 3200  # HTTP API/UI
+        - containerPort: 4317  # OTLP/gRPC
+        - containerPort: 4318  # OTLP/HTTP
+        volumeMounts:
+        - name: config-volume
+          mountPath: /etc/tempo
+        - name: storage-volume
+          mountPath: /tmp/tempo
+      volumes:
+      - name: config-volume
+        configMap:
+          name: tempo-config
+      - name: storage-volume
+        emptyDir: {}  
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: monitoring
+spec:
+  selector:
+    app: tempo
+  ports:
+  - name: http
+    port: 3200
+    targetPort: 3200
+  - name: otlp-grpc
+    port: 4317
+    targetPort: 4317
+  - name: otlp-http
+    port: 4318
+    targetPort: 4318
+  type: ClusterIP
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: monitoring  # Adjust namespace as needed
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200  # Tempo's HTTP port for API and UI
+    ingester:
+      trace_idle_period: 10s
+      max_block_duration: 5m
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:  # Enable OTLP/gRPC for trace ingestion
+              endpoint: "0.0.0.0:4317"
+            http:  # Enable OTLP/HTTP
+              endpoint: "0.0.0.0:4318"
+    storage:
+      trace:
+        backend: local  # Use local filesystem for storage
+        local:
+          path: /tmp/tempo  # Store traces in /tmp/tempo
+        wal:
+          path: /tmp/tempo/wal  # Write-ahead log directory
